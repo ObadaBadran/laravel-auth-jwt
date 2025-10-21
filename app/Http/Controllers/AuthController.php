@@ -105,7 +105,7 @@ class AuthController extends Controller
             PasswordOtp::create([
                 'user_id' => $user->id,
                 'otp' => $otp,
-                'expires_at' => Carbon::now()->addMinutes(5),
+                'expires_at' => Carbon::now()->addMinutes(10),
             ]);
 
             Mail::to($user->email)->send(new OtpMail($otp));
@@ -128,42 +128,20 @@ class AuthController extends Controller
     public function verifyOtpAndChangePassword(Request $request)
     {
         try {
-            $validator = Validator::make($request->all(), [
-                'email' => 'required|email', // إضافة email للتحقق
+
+            $otpValidator = Validator::make($request->all(), [
                 'otp' => 'required|numeric',
-                'new_password' => [
-                    'required',
-                    'string',
-                    'min:8',
-                    'regex:/[a-z]/',
-                    'regex:/[A-Z]/',
-                    'regex:/[0-9]/',
-                    'regex:/[@$!%*#?&]/',
-                    'confirmed',
-                ],
             ]);
 
-            if ($validator->fails()) {
+            if ($otpValidator->fails()) {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'Validation failed',
-                    'errors' => $validator->errors()
+                    'errors' => $otpValidator->errors()
                 ], 422);
             }
 
-            // البحث عن المستخدم باستخدام البريد الإلكتروني
-            $user = User::where('email', $request->email)->first();
-
-            if (!$user) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'User not found.'
-                ], 404);
-            }
-
-            $record = PasswordOtp::where('user_id', $user->id)
-                ->where('otp', $request->otp)
-                ->first();
+            $record = PasswordOtp::where('otp', $request->otp)->first();
 
             if (!$record) {
                 return response()->json([
@@ -178,6 +156,35 @@ class AuthController extends Controller
                     'message' => 'OTP has expired. Please request a new one.'
                 ], 400);
             }
+
+            // جلب المستخدم الصحيح المرتبط بالـ OTP
+            $user = User::find($record->user_id);
+
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not found for this OTP.'
+                ], 404);
+            }
+
+            $request->validate([
+
+                'new_password' => [
+                    'required',
+                    'string',
+                    'min:8',
+                    'confirmed',
+                    'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]+$/'
+                ],
+            ]);
+
+           /* if ($passwordValidator->fails()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Password validation failed',
+                    'errors' => $passwordValidator->errors()
+                ], 422);
+            }*/
 
             $user->update([
                 'password' => Hash::make($request->new_password),
@@ -198,6 +205,9 @@ class AuthController extends Controller
             ], 500);
         }
     }
+
+
+
 
 
     protected function respondWithToken($token)
