@@ -10,13 +10,13 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Carbon\Carbon;
-
+use Illuminate\Support\Facades\Validator;
 
 class AuthController extends Controller
 {
     public function  register(Request $request)
     {
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'password' => [
@@ -31,6 +31,13 @@ class AuthController extends Controller
             ],
         ]);
 
+        if ($validator->fails()) {
+
+            return response()->json([
+                'status' => 'error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
