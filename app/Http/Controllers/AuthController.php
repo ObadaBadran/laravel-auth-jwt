@@ -77,30 +77,53 @@ class AuthController extends Controller
 
     public function sendOtp(Request $request)
     {
-        $user = auth()->user();
+        try {
+            $user = auth()->user();
 
-        if (!$user) {
-            return response()->json(['error' => 'Unauthorized'], 401);
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Unauthorized. Invalid or expired token.'
+                ], 401);
+            }
+
+            $otp = rand(100000, 999999);
+
+            PasswordOtp::where('user_id', $user->id)->delete();
+
+            PasswordOtp::create([
+                'user_id' => $user->id,
+                'otp' => $otp,
+                'expires_at' => Carbon::now()->addMinutes(5),
+            ]);
+
+            Mail::to($user->email)->send(new OtpMail($otp));
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'OTP has been sent to your email.'
+            ], 200);
+
+        } catch (\Tymon\JWTAuth\Exceptions\TokenExpiredException $e) {
+            return response()->json(['status'=>'error','message'=>'Token has expired.'], 401);
+        } catch (\Tymon\JWTAuth\Exceptions\TokenInvalidException $e) {
+            return response()->json(['status'=>'error','message'=>'Token is invalid.'], 401);
+        } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
+            return response()->json(['status'=>'error','message'=>'Token not provided.'], 401);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to send OTP. Please try again.',
+                'error' => $e->getMessage()
+            ], 500);
         }
-
-        $otp = rand(100000, 999999);
-
-        PasswordOtp::where('user_id', $user->id)->delete();
-
-        PasswordOtp::create([
-            'user_id' => $user->id,
-            'otp' => $otp,
-            'expires_at' => Carbon::now()->addMinutes(5),
-        ]);
-
-        Mail::to($user->email)->send(new OtpMail($otp));
-
-        return response()->json(['message' => 'OTP sent to your email']);
     }
+
 
     public function verifyOtpAndChangePassword(Request $request)
     {
-        $request->validate([
+
+        $validator = Validator::make($request->all(), [
             'otp' => 'required|numeric',
             'new_password' => [
                 'required',
@@ -114,10 +137,20 @@ class AuthController extends Controller
             ],
         ]);
 
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
         $user = auth()->user();
 
         if (!$user) {
-            return response()->json(['error' => 'Unauthorized'], 401);
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Unauthorized. Please log in first.'
+            ], 401);
         }
 
         $record = PasswordOtp::where('user_id', $user->id)
@@ -125,11 +158,17 @@ class AuthController extends Controller
             ->first();
 
         if (!$record) {
-            return response()->json(['error' => 'Invalid OTP'], 400);
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid OTP. Please check the code sent to your email.'
+            ], 400);
         }
 
         if (Carbon::now()->greaterThan($record->expires_at)) {
-            return response()->json(['error' => 'OTP expired'], 400);
+            return response()->json([
+                'status' => 'error',
+                'message' => 'OTP has expired. Please request a new one.'
+            ], 400);
         }
 
         $user->update([
@@ -138,8 +177,12 @@ class AuthController extends Controller
 
         $record->delete();
 
-        return response()->json(['message' => 'Password changed successfully']);
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Password changed successfully.'
+        ], 200);
     }
+
 
     protected function respondWithToken($token)
     {
