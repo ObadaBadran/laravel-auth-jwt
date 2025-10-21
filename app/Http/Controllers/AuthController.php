@@ -78,13 +78,24 @@ class AuthController extends Controller
     public function sendOtp(Request $request)
     {
         try {
-            $user = auth()->user();
+            $validator = Validator::make($request->all(), [
+                'email' => 'required|email'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 'error',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $user = User::where('email', $request->email)->first();
 
             if (!$user) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Unauthorized. Invalid or expired token.'
-                ], 401);
+                    'message' => 'User not found.'
+                ], 404);
             }
 
             $otp = rand(100000, 999999);
@@ -104,12 +115,6 @@ class AuthController extends Controller
                 'message' => 'OTP has been sent to your email.'
             ], 200);
 
-        } catch (\Tymon\JWTAuth\Exceptions\TokenExpiredException $e) {
-            return response()->json(['status'=>'error','message'=>'Token has expired.'], 401);
-        } catch (\Tymon\JWTAuth\Exceptions\TokenInvalidException $e) {
-            return response()->json(['status'=>'error','message'=>'Token is invalid.'], 401);
-        } catch (\Tymon\JWTAuth\Exceptions\JWTException $e) {
-            return response()->json(['status'=>'error','message'=>'Token not provided.'], 401);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -122,65 +127,76 @@ class AuthController extends Controller
 
     public function verifyOtpAndChangePassword(Request $request)
     {
+        try {
+            $validator = Validator::make($request->all(), [
+                'email' => 'required|email', // إضافة email للتحقق
+                'otp' => 'required|numeric',
+                'new_password' => [
+                    'required',
+                    'string',
+                    'min:8',
+                    'regex:/[a-z]/',
+                    'regex:/[A-Z]/',
+                    'regex:/[0-9]/',
+                    'regex:/[@$!%*#?&]/',
+                    'confirmed',
+                ],
+            ]);
 
-        $validator = Validator::make($request->all(), [
-            'otp' => 'required|numeric',
-            'new_password' => [
-                'required',
-                'string',
-                'min:8',
-                'regex:/[a-z]/',
-                'regex:/[A-Z]/',
-                'regex:/[0-9]/',
-                'regex:/[@$!%*#?&]/',
-                'confirmed',
-            ],
-        ]);
+            if ($validator->fails()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
 
-        if ($validator->fails()) {
+            // البحث عن المستخدم باستخدام البريد الإلكتروني
+            $user = User::where('email', $request->email)->first();
+
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not found.'
+                ], 404);
+            }
+
+            $record = PasswordOtp::where('user_id', $user->id)
+                ->where('otp', $request->otp)
+                ->first();
+
+            if (!$record) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Invalid OTP. Please check the code sent to your email.'
+                ], 400);
+            }
+
+            if (Carbon::now()->greaterThan($record->expires_at)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'OTP has expired. Please request a new one.'
+                ], 400);
+            }
+
+            $user->update([
+                'password' => Hash::make($request->new_password),
+            ]);
+
+            $record->delete();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Password changed successfully.'
+            ], 200);
+
+        } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'errors' => $validator->errors()
-            ], 422);
+                'message' => 'An error occurred while changing password.',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
         }
-
-        $user = auth()->user();
-
-        if (!$user) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Unauthorized. Please log in first.'
-            ], 401);
-        }
-
-        $record = PasswordOtp::where('user_id', $user->id)
-            ->where('otp', $request->otp)
-            ->first();
-
-        if (!$record) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Invalid OTP. Please check the code sent to your email.'
-            ], 400);
-        }
-
-        if (Carbon::now()->greaterThan($record->expires_at)) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'OTP has expired. Please request a new one.'
-            ], 400);
-        }
-
-        $user->update([
-            'password' => Hash::make($request->new_password),
-        ]);
-
-        $record->delete();
-
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Password changed successfully.'
-        ], 200);
     }
 
 
